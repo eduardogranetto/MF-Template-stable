@@ -1,3 +1,4 @@
+using App.Repository;
 using VendaERP.Core;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,6 +7,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<DBSettings>(builder.Configuration.GetSection("MongoConnection"));
 
 builder.Services.AddSingleton<DBAccess>();
+
+builder.Services.AddScoped(typeof(IProdutoRepository), typeof(ProdutoRepository));
+builder.Services.AddScoped(typeof(IEtiquetasPadroesRepository), typeof(EtiquetasPadroesRepository));
+builder.Services.AddScoped(typeof(IEmpresaRepository), typeof(EmpresaRepository));
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
