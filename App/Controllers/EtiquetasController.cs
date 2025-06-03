@@ -1,46 +1,51 @@
 ﻿using System.Net;
 using App.Models;
 using App.Repository;
+using App.Services;
 using App.VendaERP.Core.Models;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using Newtonsoft.Json;
-using VendaERP.Core;
 
 namespace App.Controllers
 {
     public class EtiquetasController : Controller
     {
-        private readonly IEtiquetasPadroesRepository _etiquetasPadroesRepository;
-        private readonly IEmpresaRepository _empresaRepository;
-        private readonly IProdutoRepository _produtoRepository;
-        private readonly Autocompletar _autocompletar;
+        private readonly EtiquetasPadroesRepository _etiquetasPadroesRepository;
+        private readonly EmpresaRepository _empresaRepository;
+        private readonly ProdutoRepository _produtoRepository;
         private readonly ILogger<EtiquetasController> _logger;
+        private readonly AutocompletarService _autocompletarService;
 
         public EtiquetasController(
-            IEtiquetasPadroesRepository etiquetasPadroesRepository,
-            IEmpresaRepository empresaRepository,
-            IProdutoRepository produtoRepository,
-            DBAccess db, ILogger<EtiquetasController> logger)
+            EtiquetasPadroesRepository etiquetasPadroesRepository,
+            EmpresaRepository empresaRepository,
+            ProdutoRepository produtoRepository,
+            AutocompletarService autocompletarService,
+            ILogger<EtiquetasController> logger
+        )
         {
             _etiquetasPadroesRepository = etiquetasPadroesRepository;
             _empresaRepository = empresaRepository;
             _produtoRepository = produtoRepository;
-            _autocompletar = new Autocompletar(db);
             _logger = logger;
+            _autocompletarService = autocompletarService;
         }
 
         public IActionResult Index()
         {
             if (TempData.ContainsKey("message"))
                 ViewBag.message = TempData["message"];
-            return View(_autocompletar);
+            return View(_autocompletarService.getAutocompletar());
         }
 
         public IActionResult NewModel() => View();
 
-        public IActionResult SaveNewModel(string nome, string papel, string larguraPapel, string alturaPapel, string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical, string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco, string? alturaBarras)
+        public IActionResult SaveNewModel(string nome, string papel, string larguraPapel, string alturaPapel,
+            string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical,
+            string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco,
+            string? alturaBarras)
         {
             var padrao = new DtoEtiquetasPadroes
             {
@@ -80,6 +85,7 @@ namespace App.Controllers
                 _etiquetasPadroesRepository.Delete(id);
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
+
             return new HttpResponseMessage(HttpStatusCode.BadRequest);
         }
 
@@ -94,10 +100,14 @@ namespace App.Controllers
                     _logger.LogInformation($"EditModel {ViewBag.modelo.ZoomImpressao}");
                 }
             }
+
             return View();
         }
 
-        public IActionResult UpdateModel(string id, string nome, string papel, string larguraPapel, string alturaPapel, string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical, string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco, string? alturaBarras)
+        public IActionResult UpdateModel(string id, string nome, string papel, string larguraPapel, string alturaPapel,
+            string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical,
+            string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco,
+            string? alturaBarras)
         {
             if (!string.IsNullOrEmpty(id))
             {
@@ -122,39 +132,48 @@ namespace App.Controllers
                 };
                 _etiquetasPadroesRepository.Update(id, modelo);
             }
+
             return Redirect($"/Etiquetas/EditModel/{id}");
         }
 
         [HttpPost]
-        public IActionResult Baixar(string? empresa, string? etiqueta, string? clienteFornecedor, string? tabelaDePreco, bool dadoLadoCodigoBarras, bool imprimirCodigoBarras, bool imprimirNumeroCodigoBarras, bool imprimirCodigo, bool imprimirNome, bool imprimirPreco, bool imprimirMarca, bool imprimirBorda, bool imprimirLote, bool imprimirNumeroSerie, List<string> itens)
+        public IActionResult Baixar(string? empresa, string? etiqueta, string? clienteFornecedor, string? tabelaDePreco,
+            bool dadoLadoCodigoBarras, bool imprimirCodigoBarras, bool imprimirNumeroCodigoBarras, bool imprimirCodigo,
+            bool imprimirNome, bool imprimirPreco, bool imprimirMarca, bool imprimirBorda, bool imprimirLote,
+            bool imprimirNumeroSerie, List<string> itens)
         {
             if (itens == null || itens.Count == 0)
             {
                 TempData["message"] = "Ao menos um item deve ser inserido";
                 return Redirect("/Etiquetas/Index");
             }
+
             if (string.IsNullOrEmpty(empresa))
             {
                 TempData["message"] = "Erro: ID da empresa vazia ou nula.";
                 return Redirect("/Etiquetas/Index");
             }
+
             var empresaObj = _empresaRepository.GetById(empresa);
             if (empresaObj == null || string.IsNullOrEmpty(empresaObj.NomeFantasia))
             {
                 TempData["message"] = "Erro: Empresa não encontrada";
                 return Redirect("/Etiquetas/Index");
             }
+
             if (string.IsNullOrEmpty(etiqueta))
             {
                 TempData["message"] = "Erro: ID do modelo de etiqueta vazia ou nula.";
                 return Redirect("/Etiquetas/Index");
             }
+
             var modelEtiqueta = _etiquetasPadroesRepository.GetById(etiqueta);
             if (modelEtiqueta == null)
             {
                 TempData["message"] = "Erro: Modelo de etiqueta não encontrado";
                 return Redirect("/Etiquetas/Index");
             }
+
             var listaItens = new List<ProdutoEscolhido>();
             foreach (var item in itens)
             {
@@ -171,6 +190,7 @@ namespace App.Controllers
                     listaItens.Add(produdo);
                 }
             }
+
             ViewBag.opcoesSelecionadas = new OpcoesSelecionadas
             {
                 DadoLadoCodigoBarras = dadoLadoCodigoBarras,
@@ -196,8 +216,10 @@ namespace App.Controllers
             var produtoEscolhido = _produtoRepository.GetById(produto);
             if (produtoEscolhido != null)
             {
-                return $"{{\"Id\":\"{produtoEscolhido.Id}\",\"Codigo\":\"{produtoEscolhido.Codigo}\",\"Nome\":\"{produtoEscolhido.Nome.Replace("\"", "\\\"")}\",\"PrecoVenda\":\"{produtoEscolhido.Preco}\",\"Marca\":\"{produtoEscolhido.Marca}\",\"NumeroSerie\":\"{produtoEscolhido.NumeroSerie}\"}}";
+                return
+                    $"{{\"Id\":\"{produtoEscolhido.Id}\",\"Codigo\":\"{produtoEscolhido.Codigo}\",\"Nome\":\"{produtoEscolhido.Nome.Replace("\"", "\\\"")}\",\"PrecoVenda\":\"{produtoEscolhido.Preco}\",\"Marca\":\"{produtoEscolhido.Marca}\",\"NumeroSerie\":\"{produtoEscolhido.NumeroSerie}\"}}";
             }
+
             return "Erro";
         }
 
@@ -212,22 +234,15 @@ namespace App.Controllers
         [BsonRepresentation(BsonType.ObjectId)]
         [JsonProperty("Id")]
         public string Id { get; set; }
-        [BsonElement("CodigoNFe")]
-        public string Codigo { get; set; }
-        [BsonElement("Nome")]
-        public string Nome { get; set; }
-        [BsonElement("PrecoVenda")]
-        public double Preco { get; set; }
-        [BsonElement("Marca")]
-        public string Marca { get; set; }
-        [BsonElement("NumeroSerie")]
-        public string NumeroSerie { get; set; }
-        [BsonElement("EAN_NFe")]
-        public string CodigoBarras { get; set; }
-        [BsonIgnore]
-        public string Lote { get; set; }
-        [BsonIgnore]
-        public int Quantidade { get; set; }
+
+        [BsonElement("CodigoNFe")] public string Codigo { get; set; }
+        [BsonElement("Nome")] public string Nome { get; set; }
+        [BsonElement("PrecoVenda")] public double Preco { get; set; }
+        [BsonElement("Marca")] public string Marca { get; set; }
+        [BsonElement("NumeroSerie")] public string NumeroSerie { get; set; }
+        [BsonElement("EAN_NFe")] public string CodigoBarras { get; set; }
+        [BsonIgnore] public string Lote { get; set; }
+        [BsonIgnore] public int Quantidade { get; set; }
     }
 
     class OpcoesSelecionadas
