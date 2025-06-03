@@ -1,185 +1,197 @@
-﻿using App.Models;
+﻿using System.Net;
+using App.Models;
+using App.Repository;
+using App.Services;
 using App.VendaERP.Core.Models;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
-using MongoDB.Driver;
 using Newtonsoft.Json;
-using System.Net;
-using System.Text.Json;
-using VendaERP.Core;
 
 namespace App.Controllers
 {
     public class EtiquetasController : Controller
     {
-        private readonly DBAccess _db;
-        private Autocompletar autocompletar;
-        private ILogger<EtiquetasController> logger;
-        public EtiquetasController(DBAccess db, ILogger<EtiquetasController> logger)
-        {
-            _db = db;
-            this.autocompletar = new Autocompletar(db);
+        private readonly EtiquetasPadroesRepository _etiquetasPadroesRepository;
+        private readonly EmpresaRepository _empresaRepository;
+        private readonly ProdutoRepository _produtoRepository;
+        private readonly ILogger<EtiquetasController> _logger;
+        private readonly AutocompletarService _autocompletarService;
 
-            this.logger = logger;
+        public EtiquetasController(
+            EtiquetasPadroesRepository etiquetasPadroesRepository,
+            EmpresaRepository empresaRepository,
+            ProdutoRepository produtoRepository,
+            AutocompletarService autocompletarService,
+            ILogger<EtiquetasController> logger
+        )
+        {
+            _etiquetasPadroesRepository = etiquetasPadroesRepository;
+            _empresaRepository = empresaRepository;
+            _produtoRepository = produtoRepository;
+            _logger = logger;
+            _autocompletarService = autocompletarService;
         }
+
         public IActionResult Index()
         {
             if (TempData.ContainsKey("message"))
                 ViewBag.message = TempData["message"];
-            return View(this.autocompletar);
+            return View(_autocompletarService.getAutocompletar());
         }
-        public IActionResult NewModel()
+
+        public IActionResult NewModel() => View();
+
+        public IActionResult SaveNewModel(string nome, string papel, string larguraPapel, string alturaPapel,
+            string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical,
+            string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco,
+            string? alturaBarras)
         {
-            return View();
-        }
-        public IActionResult SaveNewModel(string nome, string papel, string larguraPapel, string alturaPapel, string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical, string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco, string? alturaBarras)
-        {
-            DtoEtiquetasPadroes padrao = new DtoEtiquetasPadroes()
+            var padrao = new DtoEtiquetasPadroes
             {
                 Nome = nome,
-                Papel = (TipoPapel)Enum.Parse(typeof(TipoPapel), papel),
-                LarguraPapel = Double.Parse(larguraPapel),
-                AlturaPapel = Double.Parse(alturaPapel),
-                Largura = larguraEtiqueta != null ? Double.Parse(larguraEtiqueta) : null,
-                Altura = alturaEtiqueta != null ? Double.Parse(alturaEtiqueta) : null,
-                EspacamentoHorizontal = espacamentoHorizontal != null ? Double.Parse(espacamentoHorizontal) : null,
-                EspacamentoVertical = espacamentoVertical != null ? Double.Parse(espacamentoVertical) : null,
-                MargemEsquerda = margemEsquerda != null ? Double.Parse(margemEsquerda) : null,
-                MargemSuperior = margemSuperior != null ? Double.Parse(margemSuperior) : null,
-                ZoomImpressao = zoomImpressao != null ? Double.Parse(zoomImpressao) : null,
+                Papel = Enum.Parse<TipoPapel>(papel),
+                LarguraPapel = double.Parse(larguraPapel),
+                AlturaPapel = double.Parse(alturaPapel),
+                Largura = ParseNullableDouble(larguraEtiqueta),
+                Altura = ParseNullableDouble(alturaEtiqueta),
+                EspacamentoHorizontal = ParseNullableDouble(espacamentoHorizontal),
+                EspacamentoVertical = ParseNullableDouble(espacamentoVertical),
+                MargemEsquerda = ParseNullableDouble(margemEsquerda),
+                MargemSuperior = ParseNullableDouble(margemSuperior),
+                ZoomImpressao = ParseNullableDouble(zoomImpressao),
                 TamanhoFonte = tamanhoFonte,
                 TamanhoPreco = tamanhoPreco,
-                AlturaEAN = alturaBarras != null ? Double.Parse(alturaBarras) : null
+                AlturaEAN = ParseNullableDouble(alturaBarras)
             };
-            _db._repositoryEtiquetasPadroes.Collection.InsertOne(padrao);
-            this.logger.LogInformation("SaveNewModel " + padrao.ZoomImpressao);
+            _etiquetasPadroesRepository.Insert(padrao);
+            _logger.LogInformation($"SaveNewModel {padrao.ZoomImpressao}");
             return Redirect("/Etiquetas/ListModels");
         }
+
         public IActionResult ListModels(int pageNumber)
         {
-            var listModels = _db._repositoryEtiquetasPadroes.Collection.Find(x => true).Sort("{_id: -1}").ToList();
-            var pager = new Pager(listModels.Count(), pageNumber, 15);
+            var listModels = _etiquetasPadroesRepository.GetAll();
+            var pager = new Pager(listModels.Count, pageNumber, 15);
             var model = listModels.Skip((pager.CurrentPage - 1) * pager.PageSize).Take(pager.PageSize).ToList();
-            this.ViewBag.pager = pager;
+            ViewBag.pager = pager;
             return View(model);
         }
+
         public HttpResponseMessage RemoveModel(string id)
         {
             if (!string.IsNullOrEmpty(id))
             {
-                _db._repositoryEtiquetasPadroes.Collection.DeleteOne(x => x.Id == id);
+                _etiquetasPadroesRepository.Delete(id);
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
+
             return new HttpResponseMessage(HttpStatusCode.BadRequest);
         }
+
         [Route("Etiquetas/EditModel/{id}")]
         public IActionResult EditModel(string id)
         {
             if (!string.IsNullOrEmpty(id))
             {
-                this.ViewBag.modelo = _db._repositoryEtiquetasPadroes.Collection.Find(x => x.Id == id).FirstOrDefault();
-                if(this.ViewBag.modelo != null && this.ViewBag.ZoomImpressao != null){
-                    double zoom = this.ViewBag.modelo.ZoomImpressao;
-                    this.logger.LogInformation("EditModel " + zoom.ToString());
+                ViewBag.modelo = _etiquetasPadroesRepository.GetById(id);
+                if (ViewBag.modelo != null && ViewBag.ZoomImpressao != null)
+                {
+                    _logger.LogInformation($"EditModel {ViewBag.modelo.ZoomImpressao}");
                 }
             }
+
             return View();
         }
-        public IActionResult UpdateModel(string id, string nome, string papel, string larguraPapel, string alturaPapel, string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical, string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco, string? alturaBarras)
+
+        public IActionResult UpdateModel(string id, string nome, string papel, string larguraPapel, string alturaPapel,
+            string? larguraEtiqueta, string? alturaEtiqueta, string? espacamentoHorizontal, string? espacamentoVertical,
+            string? margemEsquerda, string? margemSuperior, string? zoomImpressao, int? tamanhoFonte, int? tamanhoPreco,
+            string? alturaBarras)
         {
             if (!string.IsNullOrEmpty(id))
             {
-                this.logger.LogInformation("UpdateModel " + zoomImpressao);
-                DtoEtiquetasPadroes modelo = new DtoEtiquetasPadroes()
+                _logger.LogInformation($"UpdateModel {zoomImpressao}");
+                var modelo = new DtoEtiquetasPadroes
                 {
                     Id = id,
                     Nome = nome,
-                    Papel = (TipoPapel)Enum.Parse(typeof(TipoPapel), papel),
-                    LarguraPapel = Double.Parse(larguraPapel),
-                    AlturaPapel = Double.Parse(alturaPapel),
-                    Largura = larguraEtiqueta != null ? Double.Parse(larguraEtiqueta) : null,
-                    Altura = alturaEtiqueta != null ? Double.Parse(alturaEtiqueta) : null,
-                    EspacamentoHorizontal = espacamentoHorizontal != null ? Double.Parse(espacamentoHorizontal) : null,
-                    EspacamentoVertical = espacamentoVertical != null ? Double.Parse(espacamentoVertical) : null,
-                    MargemEsquerda = margemEsquerda != null ? Double.Parse(margemEsquerda) : null,
-                    MargemSuperior = margemSuperior != null ? Double.Parse(margemSuperior) : null,
-                    ZoomImpressao = zoomImpressao != null ? Double.Parse(zoomImpressao) : null,
+                    Papel = Enum.Parse<TipoPapel>(papel),
+                    LarguraPapel = double.Parse(larguraPapel),
+                    AlturaPapel = double.Parse(alturaPapel),
+                    Largura = ParseNullableDouble(larguraEtiqueta),
+                    Altura = ParseNullableDouble(alturaEtiqueta),
+                    EspacamentoHorizontal = ParseNullableDouble(espacamentoHorizontal),
+                    EspacamentoVertical = ParseNullableDouble(espacamentoVertical),
+                    MargemEsquerda = ParseNullableDouble(margemEsquerda),
+                    MargemSuperior = ParseNullableDouble(margemSuperior),
+                    ZoomImpressao = ParseNullableDouble(zoomImpressao),
                     TamanhoFonte = tamanhoFonte,
                     TamanhoPreco = tamanhoPreco,
-                    AlturaEAN = alturaBarras != null ? Double.Parse(alturaBarras) : null
+                    AlturaEAN = ParseNullableDouble(alturaBarras)
                 };
-                _db._repositoryEtiquetasPadroes.Collection.ReplaceOne(x => x.Id == id, modelo);
+                _etiquetasPadroesRepository.Update(id, modelo);
             }
-            return Redirect("/Etiquetas/EditModel/" + id);
+
+            return Redirect($"/Etiquetas/EditModel/{id}");
         }
+
         [HttpPost]
-        public IActionResult Baixar(string? empresa, string? etiqueta, string? clienteFornecedor, string? tabelaDePreco, bool dadoLadoCodigoBarras, bool imprimirCodigoBarras, bool imprimirNumeroCodigoBarras, bool imprimirCodigo, bool imprimirNome, bool imprimirPreco, bool imprimirMarca, bool imprimirBorda, bool imprimirLote, bool imprimirNumeroSerie, List<string> itens)
+        public IActionResult Baixar(string? empresa, string? etiqueta, string? clienteFornecedor, string? tabelaDePreco,
+            bool dadoLadoCodigoBarras, bool imprimirCodigoBarras, bool imprimirNumeroCodigoBarras, bool imprimirCodigo,
+            bool imprimirNome, bool imprimirPreco, bool imprimirMarca, bool imprimirBorda, bool imprimirLote,
+            bool imprimirNumeroSerie, List<string> itens)
         {
             if (itens == null || itens.Count == 0)
             {
                 TempData["message"] = "Ao menos um item deve ser inserido";
                 return Redirect("/Etiquetas/Index");
             }
-            string nomeEmpresa = null;
-            try
+
+            if (string.IsNullOrEmpty(empresa))
             {
-                if(string.IsNullOrEmpty(empresa)){
-                    TempData["message"] = "Erro: ID da empresa vazia ou nula.";
-                    return Redirect("/Etiquetas/Index");
-                }
-                nomeEmpresa = _db._repositoryEmpresa.Collection.Find(x => x.Id == empresa)?.FirstOrDefault()?.NomeFantasia;
-                if (string.IsNullOrEmpty(nomeEmpresa))
-                {
-                    TempData["message"] = "Erro: Empresa não encontrada";
-                    return Redirect("/Etiquetas/Index");
-                }
-            }
-            catch
-            {
-                TempData["message"] = "Erro: Falha ao realizar a busca no banco de dados pelo nome da empresa";
+                TempData["message"] = "Erro: ID da empresa vazia ou nula.";
                 return Redirect("/Etiquetas/Index");
             }
 
-            DtoEtiquetasPadroes modelEtiqueta = null;
-            try
+            var empresaObj = _empresaRepository.GetById(empresa);
+            if (empresaObj == null || string.IsNullOrEmpty(empresaObj.NomeFantasia))
             {
-                if (string.IsNullOrEmpty(etiqueta))
-                {
-                    TempData["message"] = "Erro: ID do modelo de etiqueta vazia ou nula.";
-                    return Redirect("/Etiquetas/Index");
-                }
-                modelEtiqueta = _db._repositoryEtiquetasPadroes.Collection.Find(x => x.Id == etiqueta).FirstOrDefault();
-                if (modelEtiqueta == null)
-                {
-                    TempData["message"] = "Erro: Empresa não encontrada";
-                    return Redirect("/Etiquetas/Index");
-                }
-            }
-            catch
-            {
-                TempData["message"] = "Erro: Falha ao realizar a busca no banco de dados pelo modelo de etiqueta";
+                TempData["message"] = "Erro: Empresa não encontrada";
                 return Redirect("/Etiquetas/Index");
             }
-            List<ProdutoEscolhido> listaItens = new List<ProdutoEscolhido>();
-            foreach(var item in itens){
-                //prod[0] == id / prod[1] == quantidade / prod[2] == lote / prod[3] == numeroSerie
-                string[] prod = item.Split(", ");
-                var produdo = BsonSerializer.Deserialize<ProdutoEscolhido>(_db._repositoryProduto.Collection.Find(x => x.Id == prod[0]).Project(new BsonDocument { { "_id", true }, { "CodigoNFe", true }, { "Nome", true }, { "PrecoVenda", true }, { "Marca", true }, { "EAN_NFe", true } }).FirstOrDefault().ToJson());
+
+            if (string.IsNullOrEmpty(etiqueta))
+            {
+                TempData["message"] = "Erro: ID do modelo de etiqueta vazia ou nula.";
+                return Redirect("/Etiquetas/Index");
+            }
+
+            var modelEtiqueta = _etiquetasPadroesRepository.GetById(etiqueta);
+            if (modelEtiqueta == null)
+            {
+                TempData["message"] = "Erro: Modelo de etiqueta não encontrado";
+                return Redirect("/Etiquetas/Index");
+            }
+
+            var listaItens = new List<ProdutoEscolhido>();
+            foreach (var item in itens)
+            {
+                var prod = item.Split(", ");
+                if (prod.Length < 2) continue;
+                var produdo = _produtoRepository.GetById(prod[0]);
                 if (produdo != null)
                 {
-                    produdo.Quantidade = int.Parse(prod[1]);
-                    if (!string.IsNullOrEmpty(prod[2]))
+                    produdo.Quantidade = int.TryParse(prod[1], out var qtd) ? qtd : 0;
+                    if (prod.Length > 2 && !string.IsNullOrEmpty(prod[2]))
                         produdo.Lote = prod[2];
-                    if (!string.IsNullOrEmpty(prod[3]))
+                    if (prod.Length > 3 && !string.IsNullOrEmpty(prod[3]))
                         produdo.NumeroSerie = prod[3];
-
                     listaItens.Add(produdo);
                 }
             }
 
-            this.ViewBag.opcoesSelecionadas = new OpcoesSelecionadas()
+            ViewBag.opcoesSelecionadas = new OpcoesSelecionadas
             {
                 DadoLadoCodigoBarras = dadoLadoCodigoBarras,
                 ImprimirBorda = imprimirBorda,
@@ -192,52 +204,45 @@ namespace App.Controllers
                 ImprimirNumeroSerie = imprimirNumeroSerie,
                 ImprimirPreco = imprimirPreco,
             };
-            this.ViewBag.nomeEmpresa = nomeEmpresa;
-            this.ViewBag.modelEtiqueta = modelEtiqueta;
-            this.ViewBag.listaItens = listaItens;
+            ViewBag.nomeEmpresa = empresaObj.NomeFantasia;
+            ViewBag.modelEtiqueta = modelEtiqueta;
+            ViewBag.listaItens = listaItens;
             return View();
         }
+
         [HttpPost]
         public string GetProduto(string deposito, string produto)
         {
-            var produtoEscolhido = BsonSerializer.Deserialize<ProdutoEscolhido>(_db._repositoryProduto.Collection.Find(x => x.Id == produto).Project(new BsonDocument { { "_id", true }, { "CodigoNFe", true }, { "Nome", true }, { "PrecoVenda", true }, { "Marca", true }, { "NumeroSerie", true } }).FirstOrDefault().ToJson());
+            var produtoEscolhido = _produtoRepository.GetById(produto);
             if (produtoEscolhido != null)
             {
-                return "{" +
-                    "\"Id\":\"" + produtoEscolhido.Id + "\"," +
-                    "\"Codigo\":\"" + produtoEscolhido.Codigo + "\"," +
-                    //replace utilizado para tratar inserções no banco de dados de "
-                    "\"Nome\":\"" + produtoEscolhido.Nome.Replace("\"","\\\"") + "\"," +
-                    "\"PrecoVenda\":\"" + produtoEscolhido.Preco + "\"," +
-                    "\"Marca\":\"" + produtoEscolhido.Marca + "\"," +
-                    "\"NumeroSerie\":\"" + produtoEscolhido.NumeroSerie + "\"}";
+                return
+                    $"{{\"Id\":\"{produtoEscolhido.Id}\",\"Codigo\":\"{produtoEscolhido.Codigo}\",\"Nome\":\"{produtoEscolhido.Nome.Replace("\"", "\\\"")}\",\"PrecoVenda\":\"{produtoEscolhido.Preco}\",\"Marca\":\"{produtoEscolhido.Marca}\",\"NumeroSerie\":\"{produtoEscolhido.NumeroSerie}\"}}";
             }
+
             return "Erro";
+        }
+
+        private static double? ParseNullableDouble(string? value)
+        {
+            return double.TryParse(value, out var result) ? result : null;
         }
     }
 
-    class ProdutoEscolhido
+    public class ProdutoEscolhido
     {
         [BsonRepresentation(BsonType.ObjectId)]
         [JsonProperty("Id")]
         public string Id { get; set; }
 
-        [BsonElement("CodigoNFe")]
-        public string Codigo { get; set; }
-        [BsonElement("Nome")]
-        public string Nome { get; set; }
-        [BsonElement("PrecoVenda")]
-        public double Preco { get; set; }
-        [BsonElement("Marca")]
-        public string Marca { get; set; }
-        [BsonElement("NumeroSerie")]
-        public string NumeroSerie { get; set; }
-        [BsonElement("EAN_NFe")]
-        public string CodigoBarras { get; set; }
-        [BsonIgnore]
-        public string Lote { get; set; }
-        [BsonIgnore]
-        public int Quantidade { get; set; }
+        [BsonElement("CodigoNFe")] public string Codigo { get; set; }
+        [BsonElement("Nome")] public string Nome { get; set; }
+        [BsonElement("PrecoVenda")] public double Preco { get; set; }
+        [BsonElement("Marca")] public string Marca { get; set; }
+        [BsonElement("NumeroSerie")] public string NumeroSerie { get; set; }
+        [BsonElement("EAN_NFe")] public string CodigoBarras { get; set; }
+        [BsonIgnore] public string Lote { get; set; }
+        [BsonIgnore] public int Quantidade { get; set; }
     }
 
     class OpcoesSelecionadas
